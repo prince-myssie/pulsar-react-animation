@@ -1,3 +1,4 @@
+
 import React, { useRef, useState, useEffect } from 'react'
 
 type AgentState =
@@ -25,6 +26,10 @@ interface SphereConfig {
   velocityY: number
   x: number
   y: number
+  blurAmount: number
+  waveFactor: number
+  wavePeriod: number
+  waveSpeed: number
 }
 
 interface ColorPalette {
@@ -136,14 +141,18 @@ const CanvasComp: React.FC<CanvasProps> = ({
   const sphereConfigRef = useRef<SphereConfig>({
     baseRadius: size * 0.35,
     maxExtraRadius: size * 0.1,
-    arcCount: 3,
+    arcCount: 4,
     arcWidth: size * 0.03,
     rotation: 0,
     distortion: 0,
     velocityX: 0,
     velocityY: 0,
     x: 0,
-    y: 0
+    y: 0,
+    blurAmount: 5,
+    waveFactor: 0.2,
+    wavePeriod: 6,
+    waveSpeed: 0.001
   })
   
   // Temps de référence pour l'animation
@@ -230,33 +239,98 @@ const CanvasComp: React.FC<CanvasProps> = ({
     return gradient
   }
   
-  // Fonction pour dessiner un arc
-  const drawArc = (
+  // Fonction pour calculer des points sur une courbe sinusoïdale (effet de vague)
+  const calculateWavePoints = (
+    centerX: number,
+    centerY: number,
+    radius: number,
+    startAngle: number,
+    endAngle: number,
+    config: SphereConfig,
+    time: number,
+    bands: AudioBands
+  ): Array<{x: number, y: number}> => {
+    const points: Array<{x: number, y: number}> = [];
+    const steps = 30; // Nombre de points pour dessiner la courbe
+    
+    // Wave factor augmente avec les hautes fréquences
+    const waveFactor = config.waveFactor * (1 + bands.high * 0.5);
+    const wavePeriod = config.wavePeriod * (1 - bands.mid * 0.3); // Période plus courte = plus de vagues
+    const waveSpeed = config.waveSpeed * (1 + bands.mid * 0.5);
+    
+    for (let i = 0; i <= steps; i++) {
+      const angle = startAngle + ((endAngle - startAngle) * i / steps);
+      
+      // Créer l'effet de vague avec une sinusoïde
+      const waveOffset = Math.sin(angle * wavePeriod + time * waveSpeed) * waveFactor * radius * (1 + bands.high * 0.3);
+      const waveRadius = radius + waveOffset;
+      
+      const x = centerX + Math.cos(angle) * waveRadius;
+      const y = centerY + Math.sin(angle) * waveRadius;
+      
+      points.push({x, y});
+    }
+    
+    return points;
+  }
+  
+  // Fonction pour dessiner un arc avec un effet de vague
+  const drawWaveArc = (
     ctx: CanvasRenderingContext2D,
-    x: number,
-    y: number,
+    centerX: number,
+    centerY: number,
     radius: number,
     startAngle: number,
     endAngle: number,
     width: number,
     color: string,
-    glow: boolean = false
+    config: SphereConfig,
+    time: number,
+    bands: AudioBands,
+    blur: boolean = false
   ): void => {
-    ctx.lineWidth = width
-    ctx.strokeStyle = color
+    ctx.lineWidth = width;
+    ctx.strokeStyle = color;
     
-    if (glow) {
-      ctx.shadowBlur = width * 1.5
-      ctx.shadowColor = color
+    // Effet de flou variable basé sur les fréquences moyennes
+    if (blur) {
+      const blurAmount = config.blurAmount * (0.5 + bands.mid * 0.5);
+      ctx.shadowBlur = blurAmount;
+      ctx.shadowColor = color;
     }
     
-    ctx.beginPath()
-    ctx.arc(x, y, radius, startAngle, endAngle)
-    ctx.stroke()
+    // Dessiner la courbe avec l'effet de vague
+    const points = calculateWavePoints(centerX, centerY, radius, startAngle, endAngle, config, time, bands);
     
-    // Réinitialiser l'effet de lueur
-    if (glow) {
-      ctx.shadowBlur = 0
+    ctx.beginPath();
+    
+    // Dessiner une courbe lisse à travers tous les points
+    if (points.length > 0) {
+      ctx.moveTo(points[0].x, points[0].y);
+      
+      // Utiliser des courbes de Bézier pour lisser les lignes
+      for (let i = 1; i < points.length - 2; i++) {
+        const xc = (points[i].x + points[i + 1].x) / 2;
+        const yc = (points[i].y + points[i + 1].y) / 2;
+        ctx.quadraticCurveTo(points[i].x, points[i].y, xc, yc);
+      }
+      
+      // Courbe pour les deux derniers points
+      if (points.length > 2) {
+        ctx.quadraticCurveTo(
+          points[points.length - 2].x,
+          points[points.length - 2].y,
+          points[points.length - 1].x,
+          points[points.length - 1].y
+        );
+      }
+    }
+    
+    ctx.stroke();
+    
+    // Réinitialiser l'effet de flou
+    if (blur) {
+      ctx.shadowBlur = 0;
     }
   }
   
@@ -274,13 +348,17 @@ const CanvasComp: React.FC<CanvasProps> = ({
     const pulseFactor = Math.sin(time * 0.002) * 0.15 + 0.85 // Fluctuation de base
     
     // Les basses fréquences influencent principalement la taille de la sphère
-    const radius = config.baseRadius * (1 + bands.low * 0.4) * pulseFactor
+    const radius = config.baseRadius * (1 + bands.low * 0.5) * pulseFactor
     
     // Créer un dégradé pour la sphère principale
     const gradient = createRadialGradient(ctx, centerX, centerY, radius * 1.2, colors, bands)
     
+    // Ajouter un flou variable en fonction des moyennes fréquences
+    ctx.shadowBlur = config.blurAmount * (0.2 + bands.mid * 1.2);
+    ctx.shadowColor = colors.secondary;
+    
     // Dessiner la sphère principale
-    ctx.globalAlpha = 0.8
+    ctx.globalAlpha = 0.8 + bands.mid * 0.2
     ctx.beginPath()
     ctx.arc(centerX, centerY, radius, 0, Math.PI * 2)
     ctx.fillStyle = gradient
@@ -292,6 +370,9 @@ const CanvasComp: React.FC<CanvasProps> = ({
     ctx.strokeStyle = colors.highlight
     ctx.stroke()
     ctx.globalAlpha = 1
+    
+    // Réinitialiser le flou
+    ctx.shadowBlur = 0;
   }
   
   // Fonction pour dessiner les arcs orbitaux
@@ -305,7 +386,7 @@ const CanvasComp: React.FC<CanvasProps> = ({
     time: number
   ): void => {
     // Facteur de distorsion basé sur les fréquences moyennes
-    const distortionFactor = 1 + bands.mid * 0.25
+    const distortionFactor = 1 + bands.mid * 0.4
     
     // Dessiner plusieurs arcs orbitaux avec des espacements différents
     for (let i = 0; i < config.arcCount; i++) {
@@ -313,10 +394,10 @@ const CanvasComp: React.FC<CanvasProps> = ({
       const baseRotation = config.rotation + (i * Math.PI * 2 / config.arcCount)
       
       // Rayon orbital plus grand que la sphère principale, influencé par les basses
-      const orbitalRadius = config.baseRadius * (1.2 + i * 0.15 + bands.low * 0.1) * distortionFactor
+      const orbitalRadius = config.baseRadius * (1.2 + i * 0.15 + bands.low * 0.2) * distortionFactor
       
       // Calculer l'épaisseur de l'arc en fonction des hautes fréquences
-      const arcWidth = config.arcWidth * (0.6 + i * 0.2) * (1 + bands.high * 0.4)
+      const arcWidth = config.arcWidth * (0.6 + i * 0.2) * (1 + bands.high * 0.5)
       
       // Calculer les angles de début et de fin pour créer un arc interrompu
       // Les transitoires influencent la longueur des segments
@@ -329,9 +410,10 @@ const CanvasComp: React.FC<CanvasProps> = ({
       const colorKey = Object.keys(colors)[colorIndex] as keyof ColorPalette
       const arcColor = colors[colorKey]
       
-      // Dessiner l'arc avec un effet de lueur influencé par les transitoires
+      // Dessiner l'arc avec un effet de vague et de lueur influencé par les transitoires
       ctx.globalAlpha = 0.7 + bands.transient * 0.3
-      drawArc(
+      
+      drawWaveArc(
         ctx,
         centerX,
         centerY,
@@ -340,14 +422,17 @@ const CanvasComp: React.FC<CanvasProps> = ({
         endAngle,
         arcWidth,
         arcColor,
-        true
+        config,
+        time,
+        bands,
+        true // Appliquer un flou
       )
       
       // Dessiner un second arc à l'opposé
       const oppositeStartAngle = startAngle + Math.PI
       const oppositeEndAngle = oppositeStartAngle + segmentLength * 0.8
       
-      drawArc(
+      drawWaveArc(
         ctx,
         centerX,
         centerY,
@@ -356,7 +441,10 @@ const CanvasComp: React.FC<CanvasProps> = ({
         oppositeEndAngle,
         arcWidth * 0.8,
         arcColor,
-        true
+        config,
+        time * 1.2, // Légèrement différent pour éviter la symétrie exacte
+        bands,
+        true // Appliquer un flou
       )
     }
     
@@ -440,6 +528,9 @@ const CanvasComp: React.FC<CanvasProps> = ({
       
       // Mettre à jour la distorsion de la sphère basée sur les hautes fréquences
       sphereConfigRef.current.distortion = bands.high * 0.3
+      
+      // Animation du flou - va et vient
+      sphereConfigRef.current.blurAmount = 5 + 10 * Math.sin(timeRef.current * 0.0005)
       
       // Mettre à jour la position de la sphère avec un mouvement aléatoire
       const position = updateSpherePosition(
