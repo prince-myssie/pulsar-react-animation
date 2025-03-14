@@ -40,7 +40,7 @@ const Index = (): JSX.Element => {
           
           // Favoriser les états d'écoute et de parole pour la démo
           const weightedStates = [...states, 'listening', 'listening', 'speaking', 'speaking'];
-          const randomState = weightedStates[Math.floor(Math.random() * weightedStates.length)];
+          const randomState = weightedStates[Math.floor(Math.random() * weightedStates.length)] as 'disconnected' | 'connecting' | 'initializing' | 'listening' | 'thinking' | 'speaking';
           setAgentState(randomState);
         }
       }, 100);
