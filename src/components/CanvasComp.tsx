@@ -1,4 +1,3 @@
-
 import React, { useRef, useState, useEffect } from 'react'
 
 type AgentState =
@@ -82,6 +81,47 @@ const statePalettes: Record<AgentState, ColorPalette> = {
   }
 }
 
+// Simulation des bandes de fréquence à partir d'un seul niveau audio
+interface AudioBands {
+  low: number      // Basses fréquences (0-200Hz)
+  mid: number      // Fréquences moyennes (200Hz-2kHz)
+  high: number     // Hautes fréquences (2kHz-20kHz)
+  transient: number // Transitoires (attaques rapides)
+}
+
+// Fonction pour simuler des bandes de fréquence à partir d'un seul niveau audio
+const simulateAudioBands = (audioLevel: number, state: AgentState, time: number): AudioBands => {
+  // Valeur absolue du niveau audio pour les calculs
+  const absLevel = Math.abs(audioLevel);
+  
+  // Comportement différent selon l'état
+  if (state === 'speaking') {
+    // Plus de hautes fréquences et basses quand l'agent parle
+    return {
+      low: absLevel * (0.7 + 0.3 * Math.sin(time * 0.002)),
+      mid: absLevel * (0.5 + 0.5 * Math.sin(time * 0.005)),
+      high: absLevel * (0.8 + 0.2 * Math.sin(time * 0.01)),
+      transient: absLevel * (Math.random() > 0.8 ? 1.5 : 0.1),
+    };
+  } else if (state === 'listening') {
+    // Plus réactif aux transitoires quand l'agent écoute
+    return {
+      low: absLevel * (0.4 + 0.3 * Math.sin(time * 0.002)),
+      mid: absLevel * (0.7 + 0.3 * Math.sin(time * 0.005)),
+      high: absLevel * (0.5 + 0.2 * Math.sin(time * 0.01)),
+      transient: absLevel * (Math.random() > 0.7 ? 1.2 : 0.1),
+    };
+  } else {
+    // États inactifs ou autres
+    return {
+      low: absLevel * (0.3 + 0.2 * Math.sin(time * 0.001)),
+      mid: absLevel * (0.3 + 0.2 * Math.sin(time * 0.003)),
+      high: absLevel * (0.3 + 0.2 * Math.sin(time * 0.005)),
+      transient: absLevel * (Math.random() > 0.9 ? 0.8 : 0.1),
+    };
+  }
+};
+
 const CanvasComp: React.FC<CanvasProps> = ({
   size = 300,
   state = 'disconnected',
@@ -109,6 +149,12 @@ const CanvasComp: React.FC<CanvasProps> = ({
   // Temps de référence pour l'animation
   const timeRef = useRef<number>(0)
   const colorCycleRef = useRef<number>(0)
+  const audioBandsRef = useRef<AudioBands>({
+    low: 0,
+    mid: 0,
+    high: 0,
+    transient: 0
+  })
   
   // Initialize canvas - seulement une fois au démarrage
   useEffect(() => {
@@ -164,16 +210,18 @@ const CanvasComp: React.FC<CanvasProps> = ({
     y: number,
     radius: number,
     colors: ColorPalette,
-    audioLevel: number
+    bands: AudioBands
   ): CanvasGradient => {
+    // Gradient influencé par les bandes de fréquence
     const gradient = ctx.createRadialGradient(
       x, y, 0,
-      x, y, radius * (1 + Math.abs(audioLevel) * 0.2)
+      x, y, radius * (1 + bands.low * 0.3)
     )
     
-    // Ajuster l'opacité en fonction du niveau audio
-    const alphaMultiplier = 0.8 + Math.abs(audioLevel) * 0.2
+    // Ajuster l'opacité en fonction du niveau des bandes
+    const alphaMultiplier = 0.8 + bands.mid * 0.2
     
+    // Les couleurs sont influencées par les différentes bandes
     gradient.addColorStop(0, colors.primary)
     gradient.addColorStop(0.4, colors.secondary + 'CC') // Opacity 80%
     gradient.addColorStop(0.7, colors.tertiary + '99') // Opacity 60%
@@ -219,16 +267,17 @@ const CanvasComp: React.FC<CanvasProps> = ({
     centerY: number, 
     config: SphereConfig,
     colors: ColorPalette,
-    audioLevel: number,
+    bands: AudioBands,
     time: number
   ): void => {
-    // Calculer le rayon basé sur le niveau audio
-    const audioFactor = Math.abs(audioLevel)
+    // Calculer le rayon basé sur les bandes audio
     const pulseFactor = Math.sin(time * 0.002) * 0.15 + 0.85 // Fluctuation de base
-    const radius = config.baseRadius * (1 + audioFactor * 0.3) * pulseFactor
+    
+    // Les basses fréquences influencent principalement la taille de la sphère
+    const radius = config.baseRadius * (1 + bands.low * 0.4) * pulseFactor
     
     // Créer un dégradé pour la sphère principale
-    const gradient = createRadialGradient(ctx, centerX, centerY, radius * 1.2, colors, audioLevel)
+    const gradient = createRadialGradient(ctx, centerX, centerY, radius * 1.2, colors, bands)
     
     // Dessiner la sphère principale
     ctx.globalAlpha = 0.8
@@ -237,9 +286,9 @@ const CanvasComp: React.FC<CanvasProps> = ({
     ctx.fillStyle = gradient
     ctx.fill()
     
-    // Ajouter un léger bord lumineux
-    ctx.globalAlpha = 0.3 + audioFactor * 0.4
-    ctx.lineWidth = 1 + audioFactor * 2
+    // Ajouter un léger bord lumineux influencé par les hautes fréquences
+    ctx.globalAlpha = 0.3 + bands.high * 0.4
+    ctx.lineWidth = 1 + bands.transient * 3
     ctx.strokeStyle = colors.highlight
     ctx.stroke()
     ctx.globalAlpha = 1
@@ -252,25 +301,26 @@ const CanvasComp: React.FC<CanvasProps> = ({
     centerY: number,
     config: SphereConfig,
     colors: ColorPalette,
-    audioLevel: number,
+    bands: AudioBands,
     time: number
   ): void => {
-    // Facteur de distorsion basé sur l'audio
-    const distortionFactor = 1 + Math.abs(audioLevel) * 0.15
+    // Facteur de distorsion basé sur les fréquences moyennes
+    const distortionFactor = 1 + bands.mid * 0.25
     
     // Dessiner plusieurs arcs orbitaux avec des espacements différents
     for (let i = 0; i < config.arcCount; i++) {
       // Calculer l'angle de base pour cet arc
       const baseRotation = config.rotation + (i * Math.PI * 2 / config.arcCount)
       
-      // Rayon orbital plus grand que la sphère principale
-      const orbitalRadius = config.baseRadius * (1.2 + i * 0.15) * distortionFactor
+      // Rayon orbital plus grand que la sphère principale, influencé par les basses
+      const orbitalRadius = config.baseRadius * (1.2 + i * 0.15 + bands.low * 0.1) * distortionFactor
       
-      // Calculer l'épaisseur de l'arc en fonction du niveau audio
-      const arcWidth = config.arcWidth * (0.6 + i * 0.2) * (1 + Math.abs(audioLevel) * 0.3)
+      // Calculer l'épaisseur de l'arc en fonction des hautes fréquences
+      const arcWidth = config.arcWidth * (0.6 + i * 0.2) * (1 + bands.high * 0.4)
       
       // Calculer les angles de début et de fin pour créer un arc interrompu
-      const segmentLength = Math.PI * (0.5 + Math.sin(time * 0.001 + i) * 0.2)
+      // Les transitoires influencent la longueur des segments
+      const segmentLength = Math.PI * (0.5 + bands.transient * 0.3 + Math.sin(time * 0.001 + i) * 0.2)
       const startAngle = baseRotation + Math.sin(time * 0.0015) * 0.2
       const endAngle = startAngle + segmentLength
       
@@ -279,8 +329,8 @@ const CanvasComp: React.FC<CanvasProps> = ({
       const colorKey = Object.keys(colors)[colorIndex] as keyof ColorPalette
       const arcColor = colors[colorKey]
       
-      // Dessiner l'arc avec un effet de lueur
-      ctx.globalAlpha = 0.7 + Math.abs(audioLevel) * 0.3
+      // Dessiner l'arc avec un effet de lueur influencé par les transitoires
+      ctx.globalAlpha = 0.7 + bands.transient * 0.3
       drawArc(
         ctx,
         centerX,
@@ -318,15 +368,15 @@ const CanvasComp: React.FC<CanvasProps> = ({
     config: SphereConfig,
     centerX: number,
     centerY: number,
-    audioLevel: number,
+    bands: AudioBands,
     deltaTime: number
   ): { x: number, y: number } => {
-    // Ajouter un peu de mouvement aléatoire, influencé par le niveau audio
-    const audioFactor = Math.abs(audioLevel) * 2
+    // Ajouter un peu de mouvement aléatoire, influencé par les transitoires et moyennes fréquences
+    const movementFactor = bands.transient * 2 + bands.mid * 1.5
     
     // Accélération aléatoire
-    const ax = (Math.random() - 0.5) * 0.01 * audioFactor
-    const ay = (Math.random() - 0.5) * 0.01 * audioFactor
+    const ax = (Math.random() - 0.5) * 0.01 * movementFactor
+    const ay = (Math.random() - 0.5) * 0.01 * movementFactor
     
     // Mettre à jour la vélocité
     config.velocityX += ax
@@ -337,7 +387,7 @@ const CanvasComp: React.FC<CanvasProps> = ({
     config.velocityY *= 0.95
     
     // Limiter la vélocité
-    const maxVelocity = 0.5 + audioFactor * 0.5
+    const maxVelocity = 0.5 + movementFactor * 0.5
     const velocityMagnitude = Math.sqrt(config.velocityX * config.velocityX + config.velocityY * config.velocityY)
     
     if (velocityMagnitude > maxVelocity) {
@@ -376,22 +426,27 @@ const CanvasComp: React.FC<CanvasProps> = ({
       timeRef.current += deltaTime
       colorCycleRef.current += deltaTime * 0.0001 // Progression lente du cycle de couleurs
       
+      // Simuler les bandes de fréquence à partir du niveau audio
+      audioBandsRef.current = simulateAudioBands(audioLevel, state, timeRef.current)
+      const bands = audioBandsRef.current
+      
       // Obtenir le centre du canvas
       const centerX = canvas.width / 2
       const centerY = canvas.height / 2
       
       // Mettre à jour la rotation de la sphère (rotation dans le sens des aiguilles d'une montre)
-      sphereConfigRef.current.rotation += 0.005 * (1 + Math.abs(audioLevel) * 0.5)
+      // La vitesse de rotation est maintenant influencée par les moyennes fréquences
+      sphereConfigRef.current.rotation += 0.005 * (1 + bands.mid * 0.7)
       
-      // Mettre à jour la distorsion de la sphère basée sur le niveau audio
-      sphereConfigRef.current.distortion = Math.abs(audioLevel) * 0.2
+      // Mettre à jour la distorsion de la sphère basée sur les hautes fréquences
+      sphereConfigRef.current.distortion = bands.high * 0.3
       
       // Mettre à jour la position de la sphère avec un mouvement aléatoire
       const position = updateSpherePosition(
         sphereConfigRef.current,
         centerX,
         centerY,
-        audioLevel,
+        bands,
         deltaTime
       )
       
@@ -408,7 +463,7 @@ const CanvasComp: React.FC<CanvasProps> = ({
         position.y,
         sphereConfigRef.current,
         colorPalette,
-        audioLevel,
+        bands,
         timeRef.current
       )
       
@@ -419,7 +474,7 @@ const CanvasComp: React.FC<CanvasProps> = ({
         position.y,
         sphereConfigRef.current,
         colorPalette,
-        audioLevel,
+        bands,
         timeRef.current
       )
       
@@ -429,10 +484,6 @@ const CanvasComp: React.FC<CanvasProps> = ({
     // Schedule next frame
     animationRef.current = requestAnimationFrame(animate)
   }
-
-  const canvas = canvasRef.current
-
-  const canvasContext = canvas?.getContext('2d', { alpha: true })
 
   // Variable pour limiter le taux de rafraîchissement
   let lastFrameTime = performance.now()

@@ -12,16 +12,35 @@ const Index = (): JSX.Element => {
     
     const simulateAudio = (): void => {
       interval = window.setInterval(() => {
-        // Générer une valeur aléatoire entre -0.5 et 0.5
-        const randomLevel = (Math.random() - 0.5) * 1.0;
+        // Générer une valeur aléatoire pour l'audio qui dépend de l'état
+        let randomLevel;
+        
+        if (agentState === 'speaking') {
+          // Plus d'amplitude quand l'agent parle
+          randomLevel = (Math.random() - 0.3) * 1.5;
+          // Occasionnellement simuler des pauses dans la parole
+          if (Math.random() > 0.9) randomLevel *= 0.2;
+        } else if (agentState === 'listening') {
+          // Moins d'amplitude mais des pics occasionnels quand l'agent écoute
+          randomLevel = (Math.random() - 0.5) * 0.8;
+          // Occasionnellement simuler des pics audio
+          if (Math.random() > 0.93) randomLevel *= 2.5;
+        } else {
+          // Très peu d'activité pour les autres états
+          randomLevel = (Math.random() - 0.5) * 0.3;
+        }
+        
         setAudioLevel(randomLevel);
         
         // Changer d'état occasionnellement pour démontrer les différentes couleurs
-        if (Math.random() > 0.95) {
+        if (Math.random() > 0.97) {
           const states: Array<'disconnected' | 'connecting' | 'initializing' | 'listening' | 'thinking' | 'speaking'> = [
             'disconnected', 'connecting', 'initializing', 'listening', 'thinking', 'speaking'
           ];
-          const randomState = states[Math.floor(Math.random() * states.length)];
+          
+          // Favoriser les états d'écoute et de parole pour la démo
+          const weightedStates = [...states, 'listening', 'listening', 'speaking', 'speaking'];
+          const randomState = weightedStates[Math.floor(Math.random() * weightedStates.length)];
           setAgentState(randomState);
         }
       }, 100);
@@ -34,7 +53,7 @@ const Index = (): JSX.Element => {
         clearInterval(interval);
       }
     };
-  }, []);
+  }, [agentState]);
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
